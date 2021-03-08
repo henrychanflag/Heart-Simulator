@@ -1,4 +1,4 @@
-// Version: 2
+// Version: 2.1
 // By : Henry Chan
 // A motor control with flow sensor programme for Heart Simulator
 // Two outputs: one is PWM at 490Hz and one is a 50% duty-cycle variable frequency output
@@ -8,6 +8,9 @@
 // A 4 lines x 20 characters LCD module is attached using I2C interface
 // LED is to show the output status
 // A temp sensor detection is available
+// **v2.1
+// Replace the delay method by millis method for the output pulse
+// This can avoid conflict of neotimer with delay
 
 // include the library code:
 #include <neotimer.h>
@@ -29,19 +32,21 @@
 LiquidCrystal_I2C lcd(0x27,20,4); //Address: 0x27 for PCF8754; 0x3F for PCF8754A
 Neotimer mytimer = Neotimer(DISPLAY_TIMER); // Set timer interval
 
+unsigned long time_1 = 0;
 int PWM_val = 0;    // PWM variable
 int PULSE_val = 0;  // Pulse variable
-int temp = 25;      // temp1 value
+unsigned long temp = 25;      // temp1 value
 int pulse_half_period = 300;  //Pulse output half period
 boolean pulse_output = HIGH;  //PULSE_OUTPUT port value
+boolean pulse_flag = HIGH;    //A flag to control the pulse output
 int FLOW_count = 0; // Flow rate count
 //float rate = 0;       //Flow rate
 int rate = 0;
 int timer_flag = 0;
 int display_timer_flag = 0;
-byte degree[] = {0x06,0x09,0x09,0x06,0x00,0x00,0x00,0x00}; //Character for degree symbol
-byte heart[] = {0x0A,0x1F,0x1F,0x1F,0x1F,0x0E,0x04,0x00};// Heart symbol
-byte flash[] = {0x00,0x00,0x08,0x15,0x02,0x00,0x00,0x00}; // Flash symbol
+byte degree[] = {0x06,0x09,0x09,0x06,0x00,0x00,0x00,0x00};//Character for degree symbol
+byte heart[] = {0x0A,0x1F,0x1F,0x1F,0x1F,0x0E,0x04,0x00}; // Heart symbol
+byte flash[] = {0x00,0x08,0x08,0x08,0x15,0x02,0x00,0x00}; // Flash symbol
 byte danger[]= {0x06,0x0F,0x0F,0x0F,0x06,0x00,0x06,0x06}; // Danger symbol
 
 // Counting the flow rate
@@ -52,7 +57,7 @@ void counting() {
 // Routine to display
 void display_rate() {  
   //Display the icon here
-  //digitalWrite(debug,HIGH);
+  //digitalWrite(debug, digitalRead(debug) ^ 1);  //Turns debug IO ON and OFF
   if (digitalRead(OUTPUT_DET) == 0){
       if (display_timer_flag == 0){
         lcd.setCursor(11,1);
@@ -93,6 +98,7 @@ void display_rate() {
     lcd.print(' ');
   }
   //digitalWrite(debug,LOW);
+  //Serial.println(rate);
 }
 
 ISR(TIMER2_COMPA_vect)      //timer2 interrupt 33Hz
@@ -132,10 +138,10 @@ void setup() {
   TCNT2  = 0;//initialize counter value to 0
   // set compare match register for 8khz increments
   // Value = 16M/desired frequency/Prescaler
-  OCR2A = 255;// = (16*10^6) / (1*1024) - 1 (must be <65536)
+  OCR2A = 255;// Timer period = ((reg+1)*prescaler)/16M (reg must be <255)
   // turn on CTC mode
   TCCR2A |= (1 << WGM21);
-  // Set CS22 bit for 64 prescaler
+  // Set CS22 bit for 1024 prescaler
   TCCR2B |= (1 << CS22)|(1 << CS21)|(1<<CS20);   
   // enable timer compare interrupt
   TIMSK2 |= (1 << OCIE2A);
@@ -165,17 +171,9 @@ void loop() {
     display_rate();
   }
   attachInterrupt(digitalPinToInterrupt(FLOW_IN0), counting, FALLING); //Enable the interrupt for flow detection
-  temp = analogRead(TEMP_IN0)*50/1024*10;   // read temp sensor1
+  temp = analogRead(TEMP_IN0)*5*100/1024;   // read temp sensor1, temp = ADC /1024 * 5V * 100 (as 1mV = 0.1degC)
   PWM_val = analogRead(PWM_PIN);  // read PWM VR input
   PULSE_val = analogRead(PULSE_PIN); // read Pulse VR input
-
-  //Debug values
-  //Serial.print("PWM = "); 
-  //Serial.print(PWM_val);
-  //Serial.print(" PULSE = ");
-  //Serial.print(PULSE_val);
-  //Serial.print(" TEMP = "); 
-  //Serial.println(temp);
 
   // Give the pulse output at 50% duty cycle
   // Map to min 0.667Hz (=40ppm,Period=1.5s) to max 3Hz (=180ppm,Period=0.333s)
@@ -190,10 +188,17 @@ void loop() {
     //Output is enabled
     //PWM_OUT port is only for reference
     analogWrite(PWM_OUT, map(PWM_val,0,1023,0,255));  // write PWM value to PWM port, highest speed when output = 0
-    analogWrite(PULSE_OUT,map(PWM_val,0,1023,0,255)); // write PWM value to PULSE_OUT port, highest speed when output = 0
-    delay(pulse_half_period); 
-    digitalWrite(PULSE_OUT, HIGH); // Write high to the PULSE PORT to stop in the half cycle
-    delay(pulse_half_period);
+    
+    if(millis()- time_1 >= pulse_half_period){
+      time_1 += pulse_half_period;
+      pulse_flag = !pulse_flag;
+      if (pulse_flag == HIGH){
+        analogWrite(PULSE_OUT,map(PWM_val,0,1023,0,255)); // write PWM value to PULSE_OUT port, highest speed when output = 0    
+      }
+      else {
+        digitalWrite(PULSE_OUT, HIGH); // Write high to the PULSE PORT to stop in the half cycle
+      }
+    }
   }
   else{
     digitalWrite(OUTPUT_LED,LOW);

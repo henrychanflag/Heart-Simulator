@@ -1,4 +1,4 @@
-// Version: 3
+// Version: 3.2
 // By : Henry Chan
 // A motor control with flow sensor programme for Heart Simulator
 // Two outputs: one is PWM at 490Hz and one is a 50% duty-cycle variable frequency output
@@ -13,11 +13,14 @@
 // This can avoid conflict of neotimer with delay
 // **v3
 // Use rotatory encoder as inputs
+// **v3.2
+// Use key-douncing to detect the rotatory keys
 
 // include the library code:
 #include <neotimer.h>
 #include <Wire.h>  // Arduino IDE built-in
 #include <LiquidCrystal_I2C.h>
+#include <ButtonDebounce.h>
 
 #define PWM_A A0      // PWM control A Pin
 #define PWM_B 8       // PWM control B Pin
@@ -35,6 +38,8 @@
 // Set the LCD I2C address, lines and rows
 LiquidCrystal_I2C lcd(0x27,20,4); //Address: 0x27 for PCF8754; 0x3F for PCF8754A
 Neotimer mytimer = Neotimer(DISPLAY_TIMER); // Set timer interval
+ButtonDebounce button(PULSE_A, 5);
+ButtonDebounce button1(PWM_A, 5);
 
 unsigned long time_1 = 0;
 int PWM_val = 125;    // PWM variable
@@ -122,11 +127,37 @@ ISR(TIMER2_COMPA_vect)      //timer2 interrupt 33Hz
   //Count = 120 @ 2sec
   if (timer_flag == 121){
   digitalWrite(debug, digitalRead(debug) ^ 1);  //Turns debug IO ON and OFF
-  rate = float(FLOW_count)*0.062;
+  rate = float(FLOW_count)*0.062; // (0.062) factor = rate (in L)/flow count(Hz); 0.062=6L @ 100Hz flow count
   FLOW_count = 0; //reset the counter
   }
   if (timer_flag > 121) timer_flag = 0; //Reset timer_flag
   //digitalWrite(debug,LOW);
+}
+
+void pulse_knob(int state){
+  if (digitalRead(PULSE_A)==0) {
+    //CW
+    if ((digitalRead(PULSE_B)==1)&&(PULSE_val<140)) {
+      PULSE_val++;
+    }
+    //CCW
+    else if ((digitalRead(PULSE_B)==0) && (PULSE_val>40)) {
+      PULSE_val--;
+    }
+  }
+}
+
+void PWM_knob(int state){
+  if (digitalRead(PWM_A)==0) {
+    //CW
+    if ((digitalRead(PWM_B)==1)&&(PWM_val>0)) {
+      PWM_val-=5;
+    }
+    //CCW
+    else if ((digitalRead(PWM_B)==0) && (PWM_val<255)) {
+      PWM_val+=5;
+    }
+  }
 }
 
 void setup() {
@@ -147,6 +178,9 @@ void setup() {
   digitalWrite(OUTPUT_LED, LOW);
   digitalWrite(debug, LOW);
 
+  button.setCallback(pulse_knob);
+  button1.setCallback(PWM_knob);
+  
   aLastState = digitalRead(PULSE_A);
   aLastState1 = digitalRead(PWM_A);
      
@@ -186,6 +220,8 @@ void setup() {
 }
 
 void loop() {
+  button.update();
+  button1.update();
   if(mytimer.repeat()){
     display_rate();
   }
@@ -193,51 +229,6 @@ void loop() {
   // read temp sensor1, temp = ADC *5/1024 * 100 (as 1mV = 0.1degC)
   // Calculation in float and then change to integer
   temp=int(analogRead(TEMP_IN0)*5/10.24);   
-  
-  aState = digitalRead(PULSE_A); // Reads the "current" state of the outputA
-   // If the previous and the current state of the outputA are different, that means a Pulse has occured
-  if (aState != aLastState){     
-   // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(PULSE_B) != aState) { 
-      if ((PULSE_val<140)&&(repeated==true)) {
-        PULSE_val++;
-        //Serial.print("Position: ");
-        //Serial.println(PULSE_val);        
-      }
-    } 
-    else {
-      if ((PULSE_val>40)&&(repeated==true)) {
-        PULSE_val--;
-        //Serial.print("Position: ");
-        //Serial.println(PULSE_val);
-      }
-    }
-    repeated = !repeated;
-  } 
-  aLastState = aState; // Updates the previous state of the outputA with the current state
-
-  aState1 = digitalRead(PWM_A); // Reads the "current" state of the outputA
-   // If the previous and the current state of the outputA are different, that means a Pulse has occured
-  if (aState1 != aLastState1){     
-   // If the outputB state is different to the outputA state, that means the encoder is rotating clockwise
-    if (digitalRead(PWM_B) != aState1) { 
-      if ((PWM_val>0)&&(repeated1==true)) {
-        PWM_val -=5;
-        //Serial.print("PWM: ");
-        //Serial.println(PWM_val);
-      }
-    } 
-    else {
-      if ((PWM_val<255)&&(repeated1==true)) {
-        PWM_val +=5;
-        //Serial.print("PWM: ");
-        //Serial.println(PWM_val);
-      }
-    }
-    repeated1 = !repeated1;
-  } 
-  aLastState1 = aState1; // Updates the previous state of the outputA with the current state
- 
   
   //PWM_val = analogRead(PWM_A);  // read PWM VR input
   //PULSE_val = analogRead(PULSE_PIN); // read Pulse VR input
